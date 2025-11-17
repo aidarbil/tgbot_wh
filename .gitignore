@@ -1,0 +1,29 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment/config secrets
+.env
+*.env
+
+# Databases and runtime state
+bot.db
+bot.pid
+logs/
+out.log
+*.log
+
+# User uploads & generated media
+app/storage/user_uploads/
+
+# IDE/editor files
+.idea/
+.vscode/
+.DS_Store
+
