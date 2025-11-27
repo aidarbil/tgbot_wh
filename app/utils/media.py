@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, FSInputFile
 
 from bot.config import BASE_DIR
 
 ASSETS_DIR = BASE_DIR / "app" / "assets"
 DEFAULT_BANNER_PATH = BASE_DIR / "lenarst.jpg"
+INTRO_VIDEO_PATH = BASE_DIR / "IMG_4498.MP4"
 STEP1_BANNER_PATH = ASSETS_DIR / "shag1.png"
 STEP2_BANNER_PATH = ASSETS_DIR / "shag2.png"
 
@@ -20,6 +21,13 @@ def _banner_bytes() -> bytes:
 def default_banner() -> BufferedInputFile:
     """Return the default banner image for rich messages."""
     return BufferedInputFile(_banner_bytes(), filename="lenarst.jpg")
+
+
+def intro_video() -> FSInputFile | None:
+    """Return landing video if it exists on disk."""
+    if INTRO_VIDEO_PATH.exists():
+        return FSInputFile(INTRO_VIDEO_PATH, filename="intro.mp4")
+    return None
 
 
 @lru_cache()
