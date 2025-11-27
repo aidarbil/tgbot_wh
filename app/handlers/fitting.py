@@ -22,6 +22,7 @@ from ..services.video_service import get_video_service
 from ..states.fitting import FittingStates
 from ..utils.media import default_banner, step1_banner, step2_banner
 from ..utils.storage import build_upload_path, read_upload_bytes
+from .start import send_post_start_screen
 
 VIDEO_CREDIT_COST = 3
 
@@ -30,18 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 async def _send_main_menu(message: Message, user_id: int) -> None:
-    """Return user to the main menu with banner and balance info."""
+    """Return user to the main menu with the unified start screen."""
     user = await user_service.get_user(user_id)
-    balance_display = "∞" if user and user.is_admin else str(user.balance if user else 0)
-    await message.answer_photo(
-        photo=default_banner(),
-        caption=(
-            "🏁 Главное меню Hype Tuning\n"
-            f"Твой баланс: {balance_display} генераций\n\n"
-            "Хочешь вдохновения? Загляни в наш Telegram: @hypetuning"
-        ),
-        reply_markup=menu_keyboard(),
-    )
+    if not user:
+        user, _ = await user_service.get_or_create_user(user_id, message.from_user.username)
+    await send_post_start_screen(message, user, created=False)
 
 
 @router.message(F.text == "❌ Отмена")

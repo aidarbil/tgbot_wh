@@ -35,6 +35,8 @@ class Settings:
     support_contact: str
     free_credits: int = 1
     payments_currency: str = "RUB"
+    required_channel: str = ""
+    required_channel_link: str = ""
 
     @property
     def payment_packages(self) -> List[PaymentPackage]:
@@ -60,4 +62,6 @@ def get_settings() -> Settings:
         admin_ids=admin_ids,
         support_contact=os.getenv("SUPPORT_CONTACT", "@username"),
         free_credits=int(os.getenv("FREE_CREDITS", "1")),
+        required_channel=os.getenv("REQUIRED_CHANNEL", ""),
+        required_channel_link=os.getenv("REQUIRED_CHANNEL_LINK", ""),
     )

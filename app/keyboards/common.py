@@ -75,3 +75,12 @@ def payment_success_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="🏠 В меню")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+
+
+def subscription_keyboard(channel_url: str | None = None) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if channel_url:
+        builder.button(text="🔥 Подписаться", url=channel_url)
+    builder.button(text="✅ Я подписался", callback_data="subscription:check")
+    builder.adjust(1)
+    return builder.as_markup()
