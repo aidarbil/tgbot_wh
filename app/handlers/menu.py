@@ -9,42 +9,31 @@ from ..keyboards.common import cancel_keyboard, menu_keyboard, shop_keyboard
 from ..services import user_service
 from ..states.fitting import FittingStates
 from ..utils.media import default_banner, step1_banner
+from .start import send_post_start_screen
 
 router = Router(name="menu")
 _settings = get_settings()
 
 
+async def _send_main_menu(message: Message, user_id: int) -> None:
+    """Show landing screen with video/banner just like on /start."""
+    user = await user_service.get_user(user_id)
+    if not user:
+        user, _ = await user_service.get_or_create_user(user_id, message.from_user.username)
+    await send_post_start_screen(message, user, created=False)
+
+
 @router.callback_query(F.data == "menu:back")
 async def callback_back_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    user = await user_service.get_user(callback.from_user.id)
-    balance_display = "∞" if user and user.is_admin else str(user.balance if user else 0)
     if callback.message:
-        await callback.message.answer_photo(
-            photo=default_banner(),
-            caption=(
-                "🏁 Главное меню Hypetuning\n"
-                f"Твой баланс: {balance_display} генераций\n\n"
-                "Хочешь вдохновения? Загляни в наш Telegram: @hypetuning"
-            ),
-            reply_markup=menu_keyboard(),
-        )
+        await _send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
     await state.set_state(FittingStates.menu)
 
 
 @router.message(F.text == "🏠 В меню")
 async def back_to_menu(message: Message, state: FSMContext) -> None:
-    user = await user_service.get_user(message.from_user.id)
-    balance_display = "∞" if user and user.is_admin else str(user.balance if user else 0)
-    await message.answer_photo(
-        photo=default_banner(),
-        caption=(
-            "🏁 Главное меню Hypetuning\n"
-            f"Твой баланс: {balance_display} генераций\n\n"
-            "Хочешь вдохновения? Загляни в наш Telegram: @hypetuning"
-        ),
-        reply_markup=menu_keyboard(),
-    )
+    await _send_main_menu(message, message.from_user.id)
     await state.set_state(FittingStates.menu)
 
 
