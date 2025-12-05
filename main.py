@@ -12,6 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import get_settings
 from bot.app.database import create_db_and_tables
 from bot.app.handlers import admin, fitting, menu, payments, start
+from bot.app.webhooks.server import start_webhook_server
 
 
 async def main() -> None:
@@ -44,7 +45,12 @@ async def main() -> None:
 
     await create_db_and_tables()
 
-    await dp.start_polling(bot)
+    webhook_runner = await start_webhook_server()
+    try:
+        await dp.start_polling(bot)
+    finally:
+        if webhook_runner:
+            await webhook_runner.cleanup()
 
 
 if __name__ == "__main__":

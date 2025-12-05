@@ -110,7 +110,7 @@ def _status() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Manage the Hype Tuning bot process.")
+    parser = argparse.ArgumentParser(description="Manage the Hypetuning bot process.")
     subparsers = parser.add_subparsers(dest="action", required=True)
 
     start_parser = subparsers.add_parser("start", help="Start the bot in the background.")

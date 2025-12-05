@@ -22,7 +22,7 @@ async def callback_back_to_menu(callback: CallbackQuery, state: FSMContext) -> N
         await callback.message.answer_photo(
             photo=default_banner(),
             caption=(
-                "🏁 Главное меню Hype Tuning\n"
+                "🏁 Главное меню Hypetuning\n"
                 f"Твой баланс: {balance_display} генераций\n\n"
                 "Хочешь вдохновения? Загляни в наш Telegram: @hypetuning"
             ),
@@ -39,7 +39,7 @@ async def back_to_menu(message: Message, state: FSMContext) -> None:
     await message.answer_photo(
         photo=default_banner(),
         caption=(
-            "🏁 Главное меню Hype Tuning\n"
+            "🏁 Главное меню Hypetuning\n"
             f"Твой баланс: {balance_display} генераций\n\n"
             "Хочешь вдохновения? Загляни в наш Telegram: @hypetuning"
         ),
@@ -92,7 +92,7 @@ async def show_shop(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "ℹ️ Помощь")
 async def show_help(message: Message, state: FSMContext) -> None:
     await message.answer(
-        "ℹ️ Как работает Hype Tuning\n"
+        "ℹ️ Как работает Hypetuning\n"
         "1. Пополни баланс генераций.\n"
         "2. Пришли фото авто и дисков.\n"
         "3. Забери результат примерки за ~15 секунд.\n"
