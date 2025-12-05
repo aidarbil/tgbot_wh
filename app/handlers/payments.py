@@ -26,6 +26,25 @@ def _find_package(label: str):
     return None
 
 
+def _build_receipt_customer(callback: CallbackQuery) -> dict[str, str] | None:
+    if not _settings.yookassa_send_receipt:
+        return None
+    full_name = (
+        callback.from_user.full_name
+        or callback.from_user.username
+        or f"Telegram user {callback.from_user.id}"
+    )
+    email = _settings.yookassa_receipt_email
+    if callback.from_user.username:
+        email = f"{callback.from_user.username}@telegram.me"
+    if not email:
+        email = f"{callback.from_user.id}@telegram.local"
+    return {
+        "full_name": full_name[:256],
+        "email": email,
+    }
+
+
 @router.callback_query(F.data.startswith("shop:"))
 async def select_package(callback: CallbackQuery, state: FSMContext) -> None:
     label = callback.data.split(":", maxsplit=1)[1]
@@ -127,11 +146,17 @@ async def _create_yookassa_payment(callback: CallbackQuery, state: FSMContext, p
         "credits": package.credits,
     }
 
+    receipt_customer = _build_receipt_customer(callback)
+    if _settings.yookassa_send_receipt and not receipt_customer:
+        await callback.answer("Не настроен email для чеков YooKassa. Обратись в поддержку.", show_alert=True)
+        return
+
     try:
         created_payment = await service.create_payment(
             amount=package.amount,
             description=f"Пакет генераций Hypetuning: {package.name}",
             metadata=metadata,
+            receipt_customer=receipt_customer,
         )
     except Exception as exc:  # pragma: no cover - network interaction
         logger.exception("YooKassa create_payment failed: %s", exc)

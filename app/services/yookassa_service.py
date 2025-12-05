@@ -36,12 +36,47 @@ class YooKassaService:
         Configuration.account_id = _settings.yookassa_shop_id
         Configuration.secret_key = _settings.yookassa_secret_key
 
+    def _build_receipt(
+        self,
+        *,
+        amount_minor: int,
+        description: str,
+        customer: dict[str, str] | None,
+    ) -> dict[str, Any]:
+        if not customer:
+            raise RuntimeError("YOOKASSA_RECEIPT_EMAIL is not configured")
+        email = customer.get("email")
+        if not email:
+            raise RuntimeError("YOOKASSA_RECEIPT_EMAIL is not configured")
+        item = {
+            "description": description[:128],
+            "quantity": "1.00",
+            "amount": {
+                "value": _format_amount(amount_minor),
+                "currency": _settings.payments_currency,
+            },
+            "vat_code": _settings.yookassa_receipt_vat_code,
+            "payment_mode": "full_payment",
+            "payment_subject": "service",
+        }
+        receipt: dict[str, Any] = {
+            "customer": {
+                "full_name": customer.get("full_name", "")[:256],
+                "email": email,
+            },
+            "items": [item],
+        }
+        if _settings.yookassa_tax_system_code:
+            receipt["tax_system_code"] = _settings.yookassa_tax_system_code
+        return receipt
+
     async def create_payment(
         self,
         *,
         amount: int,
         description: str,
         metadata: Dict[str, Any],
+        receipt_customer: dict[str, str] | None = None,
     ) -> CreatedPayment:
         if not _settings.yookassa_return_url:
             raise RuntimeError("YOOKASSA_RETURN_URL is not configured")
@@ -58,6 +93,12 @@ class YooKassaService:
             "description": description,
             "metadata": metadata,
         }
+        if _settings.yookassa_send_receipt:
+            payload["receipt"] = self._build_receipt(
+                amount_minor=amount,
+                description=description,
+                customer=receipt_customer,
+            )
         idempotence_key = str(uuid.uuid4())
 
         payment = await asyncio.to_thread(Payment.create, payload, idempotency_key=idempotence_key)

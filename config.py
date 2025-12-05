@@ -42,6 +42,10 @@ class Settings:
     yookassa_secret_key: str = ""
     yookassa_return_url: str = ""
     yookassa_webhook_secret: str = ""
+    yookassa_send_receipt: bool = False
+    yookassa_tax_system_code: int | None = None
+    yookassa_receipt_vat_code: int = 1
+    yookassa_receipt_email: str = ""
     webhook_host: str = "127.0.0.1"
     webhook_port: int = 8080
 
@@ -80,6 +84,10 @@ def get_settings() -> Settings:
         yookassa_secret_key=os.getenv("YOOKASSA_SECRET_KEY", ""),
         yookassa_return_url=os.getenv("YOOKASSA_RETURN_URL", ""),
         yookassa_webhook_secret=os.getenv("YOOKASSA_WEBHOOK_SECRET", ""),
+        yookassa_send_receipt=os.getenv("YOOKASSA_SEND_RECEIPT", "false").lower() in {"1", "true", "yes"},
+        yookassa_tax_system_code=int(os.getenv("YOOKASSA_TAX_SYSTEM_CODE")) if os.getenv("YOOKASSA_TAX_SYSTEM_CODE") else None,
+        yookassa_receipt_vat_code=int(os.getenv("YOOKASSA_RECEIPT_VAT_CODE", "1")),
+        yookassa_receipt_email=os.getenv("YOOKASSA_RECEIPT_EMAIL", ""),
         webhook_host=os.getenv("WEBHOOK_HOST", "127.0.0.1"),
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8080")),
     )
