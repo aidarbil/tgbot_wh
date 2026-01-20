@@ -13,6 +13,9 @@ from bot.config import get_settings
 from bot.app.database import create_db_and_tables
 from bot.app.handlers import admin, fitting, menu, payments, start
 from bot.app.webhooks.server import start_webhook_server
+from bot.utils.loop import PipeEventLoopPolicy
+
+logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
@@ -28,6 +31,7 @@ async def main() -> None:
             logging.FileHandler(log_file, encoding="utf-8"),
         ],
     )
+    logger.info("Bot startup initiated")
     settings = get_settings()
 
     if not settings.bot_token:
@@ -43,15 +47,20 @@ async def main() -> None:
     dp.include_router(payments.router)
     dp.include_router(admin.router)
 
+    logger.info("Creating database and tables if needed")
     await create_db_and_tables()
 
+    logger.info("Launching webhook server (YooKassa) if enabled")
     webhook_runner = await start_webhook_server()
     try:
+        logger.info("Starting polling")
         await dp.start_polling(bot)
     finally:
         if webhook_runner:
+            logger.info("Stopping webhook server")
             await webhook_runner.cleanup()
 
 
 if __name__ == "__main__":
+    asyncio.set_event_loop_policy(PipeEventLoopPolicy())
     asyncio.run(main())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import Optional
@@ -12,57 +13,39 @@ logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 
-GENERATION_REQUEST_TIMEOUT = 180
+GENERATION_REQUEST_TIMEOUT = 240
 GENERATION_DOWNLOAD_TIMEOUT = 240
+NANOBANANA_RETRIES = 2  # additional attempts after the first try
+NANOBANANA_BACKOFF_BASE = 2
+GPT_IMAGE15_RETRIES = 2  # additional attempts after the first try
+GPT_IMAGE15_BACKOFF_BASE = 2
 
 
-GENERATION_PROMPT = """You receive exactly two inline images for editing.
-Image A (inline image 1): the full car with the OLD rims installed.
-Image B (inline image 2): the NEW rim design that must replace every rim on the car.
+GENERATION_PROMPT = """Task: Photorealistic rim swap from two photos; новые диски должны быть 1:1 как на фото B, одинаково точные в обеих панелях.
+Inputs:
+- A: фото авто. Машина, фон, свет, краска, стекла не меняются.
+- B: фронтальное фото нового диска. Использовать ровно этот диск без изменений; только металл диска (игнорировать шину/тормоз в B).
 
-OVERALL GOAL:
-Render a single photorealistic image that shows two copies of my car:
-- Left copy: 3/4 front perspective.
-- Right copy: pure side/profile perspective.
-Both copies must feature only the NEW rim from Image B. There can be no trace of the old rims anywhere in the output.
+Do:
+1) Вырезать лицевую часть диска из B; сохранить 1:1: точное число спиц, форма/толщина/изгиб спиц, болтовой круг, центр/лого, финиш/текстура, профиль обода.
+2) В A маскировать только металл диска (передний и задний колёса). Не маскировать боковину/протектор шины и кузов.
+3) Жёстко удалить старый диск внутри маски (без бленда/инпейнта). Шины и тормоза не трогать.
+4) Вставить новый диск из B на каждое колесо; подогнать эллипс/перспективу; совместить центр ступицы, диаметр, вылет, развал, поворот. Исправить дисторсию при необходимости.
+5) Окклюзия: ротор/суппорт строго за спицами; без двойных/призрачных спиц, без просвечиваний.
+6) Свет: матч освещение/тон из A, сохраняя финиш B; лёгкие тени спиц на ротор; без ореолов у борта/ступицы.
 
-RIM REPLACEMENT WORKFLOW:
-1. Locate every wheel in Image A, including rims and tire sidewalls.
-2. Remove 100 percent of each old rim and the surrounding tire details. Any leftover pixel from the old wheel counts as a failure.
-3. Use Image B as the exact blueprint for the NEW rim. Apply it to every wheel:
-   - Match spoke structure, center cap, material, and color precisely.
-   - Adjust perspective for each viewpoint (3/4 and side) so the rim sits naturally.
-   - Reconstruct the tire around the new rim so proportions remain realistic.
-4. Blend seamlessly. No doubling, ghost edges, or partial remnants of the previous rim are allowed. If old rim details persist, redo the replacement.
-5. Ensure every visible wheel uses the NEW rim. The final composition must never mix old and new designs.
+Layout (новые диски с точным числом спиц в обеих панелях):
+- 2-panel коллаж, холст 4:3, горизонтальный сплит 50/50, тонкий тёмный разделитель.
+- Top: плотный боковой кадр (level side-view) переднего колеса + переднего крыла; колесо ~50–70% кадра; новый диск чётко виден, число спиц и центр точно как в B.
+- Bottom: полный уровеньный боковой профиль того же авто; оба колеса с тем же новым диском и тем же числом спиц; старых дисков нет нигде.
+- Добавить лаконичную реалистичную вывеску «hypetuning.ru» на здании/фоне за машиной; читабельно, без лишних эффектов.
 
-SCENE AND COMPOSITION:
-- Place both cars together on a realistic ground plane with soft daylight reflections.
-- Use the Moscow City skyline in neutral daylight as the background.
-- Keep both cars identical aside from their viewing angle.
-- Cast consistent, natural shadows and reflections that match a single light direction.
+Must NOT:
+- Менять кузов/краску/клиренс/развал/шины/тормоза/фон.
+- Придумывать дизайн или менять число/форму/толщину спиц, болтовой круг, центр/лого, финиш.
+- Добавлять текст/водяные знаки кроме одной вывески «hypetuning.ru»; без глоу, блюра, фильтров, цветокора.
 
-LICENSE PLATE SPECIFICATION:
-- Display the text "HypeTuning.ru" on both cars' plates.
-- Plates must appear physically mounted and respect bumper curvature and lighting.
-
-LIGHTING AND MATERIAL CONTINUITY:
-- Match exposure, color tone, and paint reflections to Image A.
-- Do not alter paint color, body shape, or ride height.
-- Ensure the new rims share the same lighting conditions and reflective qualities as the rest of the car.
-
-STRICT PROHIBITIONS:
-- Never keep, partially show, or blend old rim details.
-- Do not modify the bodywork, color, or suspension of the car.
-- Do not change the environment beyond the described Moscow City scene.
-- Do not apply filters, stylization, or duplicate the same camera angle twice.
-
-EXPECTED RESULT:
-Deliver one high-quality photorealistic composite where:
-- Left car = 3/4 front view equipped with the new rims.
-- Right car = side view equipped with the new rims.
-- Lighting, reflections, and materials match across both cars.
-- There is absolutely zero evidence of the old rims anywhere in the image."""
+Negative prompt: low quality, blur, noise, compression artifacts, aliasing, ghost/double spokes, residual old rim, wrong spoke/lug count, wrong spoke shape/thickness, wrong center cap/logo, perspective mismatch, halos at bead/hub, unrealistic reflections, over/underexposure, color cast, CGI look, plastic textures, любые пиксели старого диска в любой панели."""
 
 
 class AIService:
@@ -86,6 +69,8 @@ class AIService:
             return await self._call_gemini(car_photo, wheel_photo)
         if self.provider in {"chatgpt", "openai"}:
             return await self._call_openai(car_photo, wheel_photo)
+        if self.provider in {"gpt_image15", "gpt-image-1.5", "gptimage15", "gpt_image_15"}:
+            return await self._call_gpt_image15(car_photo, wheel_photo)
         if self.provider in {"nanobanana", "nano-banana", "fal_nanobanana"}:
             return await self._call_nanobanana(car_photo, wheel_photo)
 
@@ -147,7 +132,7 @@ class AIService:
         return base64.b64decode(image_data)
 
     async def _call_nanobanana(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
-        endpoint = "https://fal.run/fal-ai/nano-banana/edit"
+        endpoint = "https://fal.run/fal-ai/nano-banana-pro/edit"
 
         def _detect_mime(image: bytes) -> str:
             if image.startswith(b"\x89PNG"):
@@ -165,8 +150,9 @@ class AIService:
             "prompt": GENERATION_PROMPT,
             "image_urls": [_to_data_uri(car_photo), _to_data_uri(wheel_photo)],
             "num_images": 1,
-            "output_format": "jpeg",
-            "aspect_ratio": "16:9",
+            "output_format": "png",
+            "aspect_ratio": "4:3",
+            "resolution": "1K",
         }
         headers = {
             "Content-Type": "application/json",
@@ -174,24 +160,104 @@ class AIService:
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                timeout=GENERATION_REQUEST_TIMEOUT,
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
+            attempts = NANOBANANA_RETRIES + 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    async with session.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=GENERATION_REQUEST_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
 
-            try:
-                image_url = data["images"][0]["url"]
-            except (KeyError, IndexError) as exc:
-                logger.error("Unexpected Nano Banana response: %s", data)
-                raise RuntimeError("Failed to parse Nano Banana response") from exc
+                    try:
+                        image_url = data["images"][0]["url"]
+                    except (KeyError, IndexError) as exc:
+                        logger.error("Unexpected Nano Banana response: %s", data)
+                        raise RuntimeError("Failed to parse Nano Banana response") from exc
 
-            async with session.get(image_url, timeout=GENERATION_DOWNLOAD_TIMEOUT) as image_response:
-                image_response.raise_for_status()
-                return await image_response.read()
+                    async with session.get(image_url, timeout=GENERATION_DOWNLOAD_TIMEOUT) as image_response:
+                        image_response.raise_for_status()
+                        return await image_response.read()
+                except asyncio.TimeoutError:
+                    if attempt >= attempts:
+                        logger.error("Nano Banana request timed out after %s attempts", attempts)
+                        raise
+                    sleep_for = NANOBANANA_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "Nano Banana request timeout (attempt %s/%s). Retrying in %ss",
+                        attempt,
+                        attempts,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
+
+    async def _call_gpt_image15(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
+        endpoint = "https://fal.run/fal-ai/gpt-image-1.5/edit"
+
+        def _detect_mime(image: bytes) -> str:
+            if image.startswith(b"\x89PNG"):
+                return "image/png"
+            if image.startswith(b"\xff\xd8"):
+                return "image/jpeg"
+            return "image/jpeg"
+
+        def _to_data_uri(image: bytes) -> str:
+            encoded = base64.b64encode(image).decode()
+            mime = _detect_mime(image)
+            return f"data:{mime};base64,{encoded}"
+
+        payload = {
+            "prompt": GENERATION_PROMPT,
+            "image_urls": [_to_data_uri(car_photo), _to_data_uri(wheel_photo)],
+            "image_size": "auto",
+            "background": "auto",
+            "quality": "high",
+            "input_fidelity": "high",
+            "num_images": 1,
+            "output_format": "png",
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Key {self.api_key}",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            attempts = GPT_IMAGE15_RETRIES + 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    async with session.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=GENERATION_REQUEST_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+
+                    try:
+                        image_url = data["images"][0]["url"]
+                    except (KeyError, IndexError) as exc:
+                        logger.error("Unexpected GPT Image 1.5 response: %s", data)
+                        raise RuntimeError("Failed to parse GPT Image 1.5 response") from exc
+
+                    async with session.get(image_url, timeout=GENERATION_DOWNLOAD_TIMEOUT) as image_response:
+                        image_response.raise_for_status()
+                        return await image_response.read()
+                except asyncio.TimeoutError:
+                    if attempt >= attempts:
+                        logger.error("GPT Image 1.5 request timed out after %s attempts", attempts)
+                        raise
+                    sleep_for = GPT_IMAGE15_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "GPT Image 1.5 request timeout (attempt %s/%s). Retrying in %ss",
+                        attempt,
+                        attempts,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
 
 
 def get_ai_service() -> AIService:

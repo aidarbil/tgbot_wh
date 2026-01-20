@@ -48,6 +48,18 @@ def _remove_pid() -> None:
         pass
 
 
+def _resolve_python(python_exec: str | None) -> str:
+    """Return interpreter to run the bot with, preferring local venv."""
+    if python_exec:
+        return python_exec
+
+    venv_python = BOT_DIR / ".venv" / "bin" / "python"
+    if venv_python.exists():
+        return str(venv_python)
+
+    return sys.executable
+
+
 def _start(python_exec: str | None) -> None:
     pid = _read_pid()
     if _is_running(pid):
@@ -57,7 +69,7 @@ def _start(python_exec: str | None) -> None:
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
 
-    python = python_exec or sys.executable
+    python = _resolve_python(python_exec)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG_FILE, "ab", buffering=0) as stream:
         process = subprocess.Popen(

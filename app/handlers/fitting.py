@@ -226,7 +226,7 @@ async def launch_generation(message: Message, state: FSMContext) -> None:
         await state.set_state(FittingStates.menu)
         return
 
-    await message.answer("🎨 Генерирую результат... Дай мне ~15 секунд.")
+    await message.answer("🎨 Генерирую результат... Дай мне ~45 секунд.")
     await state.set_state(FittingStates.generating)
 
     async def _load_photo_bytes(kind: str, file_id: str, path_key: str) -> bytes | None:

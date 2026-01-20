@@ -151,6 +151,9 @@ async def _create_yookassa_payment(callback: CallbackQuery, state: FSMContext, p
         await callback.answer("Не настроен email для чеков YooKassa. Обратись в поддержку.", show_alert=True)
         return
 
+    # Быстро закрываем спиннер, дальше можем работать дольше (создание платежа в YooKassa).
+    await callback.answer("Готовим ссылку на оплату…", show_alert=False)
+
     try:
         created_payment = await service.create_payment(
             amount=package.amount,

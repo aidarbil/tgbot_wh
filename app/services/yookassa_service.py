@@ -13,6 +13,8 @@ from bot.config import get_settings
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
+CREATE_TIMEOUT = 12
+FETCH_TIMEOUT = 15
 
 
 def _format_amount(amount_in_minor_units: int) -> str:
@@ -80,6 +82,12 @@ class YooKassaService:
     ) -> CreatedPayment:
         if not _settings.yookassa_return_url:
             raise RuntimeError("YOOKASSA_RETURN_URL is not configured")
+        logger.info(
+            "YooKassa create_payment start: amount=%s, description=%s, metadata=%s",
+            amount,
+            description,
+            metadata,
+        )
         payload = {
             "amount": {
                 "value": _format_amount(amount),
@@ -101,7 +109,37 @@ class YooKassaService:
             )
         idempotence_key = str(uuid.uuid4())
 
-        payment = await asyncio.to_thread(Payment.create, payload, idempotency_key=idempotence_key)
+        try:
+            payment = await asyncio.wait_for(
+                asyncio.to_thread(Payment.create, payload, idempotency_key=idempotence_key),
+                timeout=CREATE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "YooKassa create_payment timeout after %ss: amount=%s, description=%s, metadata=%s, idempotence=%s",
+                CREATE_TIMEOUT,
+                amount,
+                description,
+                metadata,
+                idempotence_key,
+            )
+            raise RuntimeError("YooKassa: timeout while creating payment")
+        except Exception:
+            logger.exception(
+                "YooKassa create_payment failed: amount=%s, description=%s, metadata=%s, idempotence=%s",
+                amount,
+                description,
+                metadata,
+                idempotence_key,
+            )
+            raise
+        logger.info(
+            "YooKassa create_payment done: id=%s, status=%s, idempotence=%s, confirmation_url=%s",
+            getattr(payment, "id", None),
+            getattr(payment, "status", None),
+            idempotence_key,
+            getattr(getattr(payment, "confirmation", None), "confirmation_url", None),
+        )
         confirmation_url = getattr(getattr(payment, "confirmation", None), "confirmation_url", None)
         if not confirmation_url:
             raise RuntimeError("YooKassa did not return a confirmation URL")
@@ -115,7 +153,18 @@ class YooKassaService:
         )
 
     async def get_payment(self, payment_id: str):  # pragma: no cover - depends on YooKassa SDK
-        return await asyncio.to_thread(Payment.find_one, payment_id)
+        logger.info("YooKassa get_payment: %s", payment_id)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(Payment.find_one, payment_id),
+                timeout=FETCH_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error("YooKassa get_payment timeout after %ss: %s", FETCH_TIMEOUT, payment_id)
+            raise RuntimeError("YooKassa: timeout while fetching payment")
+        except Exception:
+            logger.exception("YooKassa get_payment failed: %s", payment_id)
+            raise
 
 
 _service: YooKassaService | None = None

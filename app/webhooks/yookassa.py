@@ -61,6 +61,7 @@ async def handle_webhook(request: web.Request) -> web.StreamResponse:
 
     event = payload.get("event")
     payment_object = payload.get("object") or {}
+    logger.info("YooKassa webhook event=%s id=%s", event, payment_object.get("id"))
 
     if event in {"payment.succeeded", "payment.waiting_for_capture", "payment.canceled"}:
         await _process_payment_object(payment_object)

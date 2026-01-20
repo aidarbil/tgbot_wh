@@ -24,7 +24,20 @@ async def start_webhook_server() -> Optional[web.AppRunner]:
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host=settings.webhook_host, port=settings.webhook_port)
-    await site.start()
-    logger.info("Webhook server started on %s:%s", settings.webhook_host, settings.webhook_port)
-    return runner
+    try:
+        site = web.TCPSite(runner, host=settings.webhook_host, port=settings.webhook_port)
+        await site.start()
+        logger.info("Webhook server started on %s:%s", settings.webhook_host, settings.webhook_port)
+        return runner
+    except OSError as exc:
+        logger.warning(
+            "Webhook server disabled: failed to bind %s:%s (%s)",
+            settings.webhook_host,
+            settings.webhook_port,
+            exc,
+        )
+        try:
+            await runner.cleanup()
+        except Exception:
+            logger.exception("Failed to cleanup webhook runner after bind error")
+        return None
