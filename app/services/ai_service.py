@@ -19,6 +19,8 @@ NANOBANANA_RETRIES = 2  # additional attempts after the first try
 NANOBANANA_BACKOFF_BASE = 2
 GPT_IMAGE15_RETRIES = 2  # additional attempts after the first try
 GPT_IMAGE15_BACKOFF_BASE = 2
+GPT_IMAGE2_RETRIES = 2  # additional attempts after the first try
+GPT_IMAGE2_BACKOFF_BASE = 2
 
 
 GENERATION_PROMPT = """Task: Photorealistic rim swap from two photos; новые диски должны быть 1:1 как на фото B, одинаково точные в обеих панелях.
@@ -71,6 +73,8 @@ class AIService:
             return await self._call_openai(car_photo, wheel_photo)
         if self.provider in {"gpt_image15", "gpt-image-1.5", "gptimage15", "gpt_image_15"}:
             return await self._call_gpt_image15(car_photo, wheel_photo)
+        if self.provider in {"gpt_image2", "gpt-image-2", "gptimage2", "gpt_image_2"}:
+            return await self._call_gpt_image2(car_photo, wheel_photo)
         if self.provider in {"nanobanana", "nano-banana", "fal_nanobanana"}:
             return await self._call_nanobanana(car_photo, wheel_photo)
 
@@ -253,6 +257,70 @@ class AIService:
                     sleep_for = GPT_IMAGE15_BACKOFF_BASE ** attempt
                     logger.warning(
                         "GPT Image 1.5 request timeout (attempt %s/%s). Retrying in %ss",
+                        attempt,
+                        attempts,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
+
+
+    async def _call_gpt_image2(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
+        endpoint = "https://fal.run/openai/gpt-image-2/edit"
+
+        def _detect_mime(image: bytes) -> str:
+            if image.startswith(b"\x89PNG"):
+                return "image/png"
+            if image.startswith(b"\xff\xd8"):
+                return "image/jpeg"
+            return "image/jpeg"
+
+        def _to_data_uri(image: bytes) -> str:
+            encoded = base64.b64encode(image).decode()
+            mime = _detect_mime(image)
+            return f"data:{mime};base64,{encoded}"
+
+        payload = {
+            "prompt": GENERATION_PROMPT,
+            "image_urls": [_to_data_uri(car_photo), _to_data_uri(wheel_photo)],
+            "image_size": "auto",
+            "quality": "high",
+            "num_images": 1,
+            "output_format": "png",
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Key {self.api_key}",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            attempts = GPT_IMAGE2_RETRIES + 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    async with session.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=GENERATION_REQUEST_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+
+                    try:
+                        image_url = data["images"][0]["url"]
+                    except (KeyError, IndexError) as exc:
+                        logger.error("Unexpected GPT Image 2 response: %s", data)
+                        raise RuntimeError("Failed to parse GPT Image 2 response") from exc
+
+                    async with session.get(image_url, timeout=GENERATION_DOWNLOAD_TIMEOUT) as image_response:
+                        image_response.raise_for_status()
+                        return await image_response.read()
+                except asyncio.TimeoutError:
+                    if attempt >= attempts:
+                        logger.error("GPT Image 2 request timed out after %s attempts", attempts)
+                        raise
+                    sleep_for = GPT_IMAGE2_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "GPT Image 2 request timeout (attempt %s/%s). Retrying in %ss",
                         attempt,
                         attempts,
                         sleep_for,
