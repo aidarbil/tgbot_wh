@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -112,6 +113,30 @@ class AIService:
         self.api_key = api_key or _settings.fal_api_key
         self.provider = (provider or _settings.ai_provider).lower()
 
+    def _hide_secrets(self, text: str) -> str:
+        """Вычистить ключ доступа из текста ошибки перед записью в журнал.
+
+        Это не перестраховка: aiohttp кладёт в ClientResponseError ВСЕ заголовки
+        запроса, включая Authorization. Без вычистки первая же ошибка от fal
+        записала бы ключ открытым текстом в журнал и в системный лог.
+        """
+        if not text:
+            return text
+        if self.api_key:
+            text = text.replace(self.api_key, "***")
+            # ключ fal состоит из двух частей через двоеточие — прячем и каждую
+            for part in self.api_key.split(":"):
+                if len(part) > 7:
+                    text = text.replace(part, "***")
+        # на случай другого ключа в заголовке (например, при смене провайдера)
+        text = re.sub(
+            r"(?i)('Authorization':\s*')[^']*(')",
+            r"\1***\2",
+            text,
+        )
+        text = re.sub(r"(?i)\b(Key|Bearer)\s+[A-Za-z0-9._:\-]{8,}", r"\1 ***", text)
+        return text
+
     def _log_generation(self, seconds: float, ok: bool, size: int = 0, error: str = "") -> None:
         """Записать строку о генерации. Никогда не ломает саму примерку."""
         record = {
@@ -123,7 +148,7 @@ class AIService:
             "size_kb": round(size / 1024) if size else 0,
         }
         if error:
-            record["error"] = error[:300]
+            record["error"] = self._hide_secrets(error)[:300]
         logger.info(
             "generation provider=%s prompt=%s seconds=%.1f ok=%s size_kb=%s%s",
             record["provider"], record["prompt"], seconds, ok, record["size_kb"],
