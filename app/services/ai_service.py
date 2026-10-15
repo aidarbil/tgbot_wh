@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 from typing import Optional
 
 import aiohttp
@@ -21,9 +22,16 @@ GPT_IMAGE15_RETRIES = 2  # additional attempts after the first try
 GPT_IMAGE15_BACKOFF_BASE = 2
 GPT_IMAGE2_RETRIES = 2  # additional attempts after the first try
 GPT_IMAGE2_BACKOFF_BASE = 2
+GPT_IMAGE25_RETRIES = 2  # additional attempts after the first try
+GPT_IMAGE25_BACKOFF_BASE = 2
 
 
-GENERATION_PROMPT = """Task: Photorealistic rim swap from two photos; новые диски должны быть 1:1 как на фото B, одинаково точные в обеих панелях.
+# ============================ ПРОМПТЫ =======================================
+# V1 — промпт, который работал до 15.10.2026. НЕ УДАЛЯТЬ: это запасной вариант.
+# Чтобы вернуть его в работу, достаточно поставить в /root/.env строку
+#   PROMPT_VERSION=v1
+# и перезапустить бота (systemctl restart hypetuning-bot). Код менять не нужно.
+GENERATION_PROMPT_V1 = """Task: Photorealistic rim swap from two photos; новые диски должны быть 1:1 как на фото B, одинаково точные в обеих панелях.
 Inputs:
 - A: фото авто. Машина, фон, свет, краска, стекла не меняются.
 - B: фронтальное фото нового диска. Использовать ровно этот диск без изменений; только металл диска (игнорировать шину/тормоз в B).
@@ -48,6 +56,39 @@ Must NOT:
 - Добавлять текст/водяные знаки кроме одной вывески «hypetuning.ru»; без глоу, блюра, фильтров, цветокора.
 
 Negative prompt: low quality, blur, noise, compression artifacts, aliasing, ghost/double spokes, residual old rim, wrong spoke/lug count, wrong spoke shape/thickness, wrong center cap/logo, perspective mismatch, halos at bead/hub, unrealistic reflections, over/underexposure, color cast, CGI look, plastic textures, любые пиксели старого диска в любой панели."""
+
+# V2 — промпт от 15.10.2026: целиком по-английски (в заметках Обсидиана стояла
+# задача «переписать на чистый английский — GPT Image лучше понимает»), с явными
+# ролями обоих фото и списком того, что с фото диска игнорировать (водяной знак,
+# кирпичная стена, коробка). Блок «Negative prompt» убран: это формат Stable
+# Diffusion, у GPT Image отдельного поля нет и список читался как обычный текст.
+GENERATION_PROMPT_V2 = """Photorealistic wheel swap built from two input photos.
+
+IMAGE 1 = the customer's car photo. This is the base and it must survive untouched: same car, same body panels, same paint colour, same ride height and stance, same tyres, same brakes, same background, same location, same lighting and colour temperature. Do not move the camera, do not rebuild or replace the scene, do not add or remove objects.
+
+IMAGE 2 = a product photo of the new wheel. Copy ONLY the wheel face from it, and copy it exactly: spoke count, spoke shape, thickness and curvature, bolt pattern, lip and barrel profile, centre cap and its logo, finish and texture (gloss, matte, machined, polished), colour. Ignore everything else in IMAGE 2 and never carry it into the result: the brick wall, the floor, the cardboard box, the tyre, the brake, and any watermark, shop logo, website address or text overlay printed on that photo.
+
+Do:
+1. In IMAGE 1, replace the wheel face of every visible wheel with the wheel from IMAGE 2.
+2. Delete the old wheel completely inside the wheel opening; leave no spoke, no rim edge, no ghost of it.
+3. Keep the original tyres and their sidewall lettering, the brake discs and the calipers.
+4. Match perspective per wheel: ellipse, hub centre, diameter, rotation, camber. Brake disc and caliper stay behind the spokes.
+5. Match the lighting, shadows and colour temperature of IMAGE 1 while preserving the finish of IMAGE 2.
+6. Both panels must show the SAME wheel design with the SAME spoke count.
+
+Output layout: a single 4:3 image split horizontally 50/50 by a thin dark divider.
+- Top panel: tight level side view of the front wheel and front fender; the wheel fills 50-70% of the frame; spokes and centre cap clearly readable.
+- Bottom panel: full level side profile of the same car; both wheels carry the same new wheel.
+- Place exactly one realistic sign reading "hypetuning.ru" on a building in the background.
+
+Never: change the car model, body, paint, ride height, tyres or brakes; invent a wheel design or alter spoke count, spoke shape or centre cap; show any pixel of the old wheel; add watermarks, captions or any text other than the single "hypetuning.ru" sign; add glow, blur, filters, heavy colour grading or a CGI look."""
+
+# Какой промпт использовать — задаётся переменной PROMPT_VERSION в .env (по умолчанию v2).
+GENERATION_PROMPT = (
+    GENERATION_PROMPT_V1 if os.getenv("PROMPT_VERSION", "v2").strip().lower() == "v1"
+    else GENERATION_PROMPT_V2
+)
+# ============================================================================
 
 
 class AIService:
@@ -75,6 +116,8 @@ class AIService:
             return await self._call_gpt_image15(car_photo, wheel_photo)
         if self.provider in {"gpt_image2", "gpt-image-2", "gptimage2", "gpt_image_2"}:
             return await self._call_gpt_image2(car_photo, wheel_photo)
+        if self.provider in {"gpt_image25", "gpt-image-2.5", "gptimage25", "gpt_image_25", "sunburst"}:
+            return await self._call_gpt_image25(car_photo, wheel_photo)
         if self.provider in {"nanobanana", "nano-banana", "fal_nanobanana"}:
             return await self._call_nanobanana(car_photo, wheel_photo)
 
@@ -321,6 +364,75 @@ class AIService:
                     sleep_for = GPT_IMAGE2_BACKOFF_BASE ** attempt
                     logger.warning(
                         "GPT Image 2 request timeout (attempt %s/%s). Retrying in %ss",
+                        attempt,
+                        attempts,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
+
+    async def _call_gpt_image25(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
+        """GPT Image 2.5 Sunburst — модель с 15.10.2026.
+
+        Замер 15.10.2026 на трёх парах фото: ~47 сек против ~100 сек у GPT Image 2
+        и $0.053 за картинку против $0.219. Схема запроса у обеих моделей одинаковая,
+        поэтому тело запроса не отличается — меняется только адрес.
+        Откат на прежнюю модель: AI_PROVIDER=gpt_image2 в /root/.env + рестарт бота.
+        """
+        endpoint = "https://fal.run/openai/gpt-image-2.5/sunburst/edit"
+
+        def _detect_mime(image: bytes) -> str:
+            if image.startswith(b"\x89PNG"):
+                return "image/png"
+            if image.startswith(b"\xff\xd8"):
+                return "image/jpeg"
+            return "image/jpeg"
+
+        def _to_data_uri(image: bytes) -> str:
+            encoded = base64.b64encode(image).decode()
+            return f"data:{_detect_mime(image)};base64,{encoded}"
+
+        payload = {
+            "prompt": GENERATION_PROMPT,
+            "image_urls": [_to_data_uri(car_photo), _to_data_uri(wheel_photo)],
+            "image_size": "auto",
+            "quality": "high",
+            "num_images": 1,
+            "output_format": "png",
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Key {self.api_key}",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            attempts = GPT_IMAGE25_RETRIES + 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    async with session.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=GENERATION_REQUEST_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+
+                    try:
+                        image_url = data["images"][0]["url"]
+                    except (KeyError, IndexError) as exc:
+                        logger.error("Unexpected GPT Image 2.5 response: %s", data)
+                        raise RuntimeError("Failed to parse GPT Image 2.5 response") from exc
+
+                    async with session.get(image_url, timeout=GENERATION_DOWNLOAD_TIMEOUT) as image_response:
+                        image_response.raise_for_status()
+                        return await image_response.read()
+                except asyncio.TimeoutError:
+                    if attempt >= attempts:
+                        logger.error("GPT Image 2.5 request timed out after %s attempts", attempts)
+                        raise
+                    sleep_for = GPT_IMAGE25_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "GPT Image 2.5 request timeout (attempt %s/%s). Retrying in %ss",
                         attempt,
                         attempts,
                         sleep_for,
