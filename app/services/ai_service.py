@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
+import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
@@ -13,6 +16,12 @@ from bot.config import get_settings
 logger = logging.getLogger(__name__)
 
 _settings = get_settings()
+
+# Журнал генераций: по строке на каждую примерку (модель, секунды, успех/ошибка).
+# Нужен, потому что бот пишет в обычный лог только ошибки — и ответить на вопрос
+# «быстро ли работает новая модель» было нечем, кроме ощущений.
+# Путь можно переопределить переменной GENERATION_LOG в .env.
+GENERATION_LOG_PATH = os.getenv("GENERATION_LOG", "/root/bot/logs/generations.jsonl")
 
 GENERATION_REQUEST_TIMEOUT = 240
 GENERATION_DOWNLOAD_TIMEOUT = 240
@@ -103,7 +112,42 @@ class AIService:
         self.api_key = api_key or _settings.fal_api_key
         self.provider = (provider or _settings.ai_provider).lower()
 
+    def _log_generation(self, seconds: float, ok: bool, size: int = 0, error: str = "") -> None:
+        """Записать строку о генерации. Никогда не ломает саму примерку."""
+        record = {
+            "time": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "provider": self.provider,
+            "prompt": "v1" if GENERATION_PROMPT == GENERATION_PROMPT_V1 else "v2",
+            "seconds": round(seconds, 1),
+            "ok": ok,
+            "size_kb": round(size / 1024) if size else 0,
+        }
+        if error:
+            record["error"] = error[:300]
+        logger.info(
+            "generation provider=%s prompt=%s seconds=%.1f ok=%s size_kb=%s%s",
+            record["provider"], record["prompt"], seconds, ok, record["size_kb"],
+            (" error=" + record["error"]) if error else "",
+        )
+        try:
+            path = GENERATION_LOG_PATH
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as exc:  # журнал не должен мешать работе бота
+            logger.warning("Не смог записать журнал генераций: %s", exc)
+
     async def generate(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
+        started = time.monotonic()
+        try:
+            image = await self._generate(car_photo, wheel_photo)
+        except Exception as exc:
+            self._log_generation(time.monotonic() - started, ok=False, error=repr(exc))
+            raise
+        self._log_generation(time.monotonic() - started, ok=True, size=len(image))
+        return image
+
+    async def _generate(self, car_photo: bytes, wheel_photo: bytes) -> bytes:
         if not self.api_key:
             logger.error("FAL API key not configured; aborting generation")
             raise RuntimeError("FAL API key not configured")
